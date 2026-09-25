@@ -197,7 +197,20 @@ class ServiceTests(unittest.TestCase):
     def test_busy(self):
         with patch.object(main, "extraction_slots") as slots:
             slots.acquire.return_value = False
-            self.assertEqual(self.client.get("/video/abcdefghijk.mp4").status_code, 503)
+            response = self.client.get("/video/abcdefghijk.mp4")
+            self.assertEqual(response.status_code, 503)
+            self.assertIn("wait timed out", response.json()["detail"])
+            slots.acquire.assert_called_once_with(timeout=main.EXTRACTION_WAIT_SECONDS)
+            slots.release.assert_not_called()
+
+    def test_full_extraction_queue_rejects_immediately(self):
+        with patch.object(main, "extraction_queue_slots") as queue, patch.object(main, "extraction_slots") as slots:
+            queue.acquire.return_value = False
+            response = self.client.get("/video/abcdefghijk.mp4")
+            self.assertEqual(response.status_code, 503)
+            self.assertIn("queue is full", response.json()["detail"])
+            slots.acquire.assert_not_called()
+            queue.release.assert_not_called()
 
     def test_real_ytdlp_format_selector(self):
         # Exercise yt-dlp's actual selector against synthetic, quality-sorted formats.

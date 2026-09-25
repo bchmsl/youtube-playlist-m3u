@@ -198,6 +198,7 @@ New extraction starts are at least **10 seconds apart**, shared across playlist
 and video requests. One extraction runs at a time and internal extractor webpage
 requests have a one-second delay. These controls are per process, not per account
 or across replicas. Cache hits bypass pacing. A request may wait up to ten seconds;
+one overlapping request can wait up to 45 seconds for the resolver. Further
 concurrent requests return 503/Retry-After rather than building an unbounded queue.
 The existing five-minute failure cooldown is retained.
 

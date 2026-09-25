@@ -26,6 +26,11 @@ FORMAT = "best[ext=mp4][vcodec!=none][acodec!=none][protocol^=http]/best[vcodec!
 # Fixed lock stripes coalesce identical requests without an unbounded lock map.
 locks = [threading.Lock() for _ in range(64)]
 extraction_slots = threading.BoundedSemaphore(1)
+# Keep one active extraction and allow one overlapping player request to wait.
+# This avoids transient 503 responses from players that probe several items at
+# once without allowing an unbounded backlog of requests to YouTube.
+extraction_queue_slots = threading.BoundedSemaphore(2)
+EXTRACTION_WAIT_SECONDS = 45
 
 
 class ExtractionPacer:
@@ -175,10 +180,14 @@ def cached(cache, key, loader):
 
 def extract(url, *, flat=False):
     cooldown.check()
-    if not extraction_slots.acquire(blocking=False):
-        raise HTTPException(503, "YouTube resolver busy; retry shortly", headers={"Retry-After": "5"})
+    if not extraction_queue_slots.acquire(blocking=False):
+        raise HTTPException(503, "YouTube resolver queue is full; retry shortly", headers={"Retry-After": "15"})
+    slot_acquired = False
     extraction_log = ExtractionLogger()
     try:
+        if not extraction_slots.acquire(timeout=EXTRACTION_WAIT_SECONDS):
+            raise HTTPException(503, "YouTube resolver wait timed out; retry shortly", headers={"Retry-After": "15"})
+        slot_acquired = True
         cooldown.check()
         extractor_args = {} if flat else video_extractor_options()
         pacer.wait()
@@ -221,7 +230,9 @@ def extract(url, *, flat=False):
         log.exception("Unexpected YouTube extraction failure for %s", url)
         raise HTTPException(502, "YouTube extraction failed; try again later") from None
     finally:
-        extraction_slots.release()
+        if slot_acquired:
+            extraction_slots.release()
+        extraction_queue_slots.release()
 
 
 def clean_title(title):
