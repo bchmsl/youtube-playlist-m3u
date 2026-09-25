@@ -28,6 +28,9 @@ class ServiceTests(unittest.TestCase):
         self.pacing = patch.object(main.pacer, "wait")
         self.pacing.start()
         self.addCleanup(self.pacing.stop)
+        self.retry_sleep = patch.object(main.time, "sleep")
+        self.retry_sleep.start()
+        self.addCleanup(self.retry_sleep.stop)
         self.client = TestClient(main.app, base_url="https://example.onrender.com")
 
     def test_health(self):
@@ -121,11 +124,25 @@ class ServiceTests(unittest.TestCase):
         self.assertGreater(int(response.headers["retry-after"]), 0)
         self.assertEqual(self.client.get("/video/12345678901.mp4").status_code, 503)
         self.assertEqual(self.client.get("/health").status_code, 200)
-        self.assertEqual(extractor.extract_info.call_count, 1)
+        self.assertEqual(extractor.extract_info.call_count, 2)
+        main.time.sleep.assert_called_once_with(3)
         with patch.object(main.time, "monotonic", return_value=time.monotonic() + 301):
             extractor.extract_info.side_effect = None
             extractor.extract_info.return_value = {"entries": []}
             self.assertEqual(self.client.get("/playlist/PL1234567890.m3u").status_code, 200)
+
+    @patch.object(main, "YoutubeDL")
+    def test_sign_in_retry_can_recover(self, ydl):
+        extractor = ydl.return_value.__enter__.return_value
+        extractor.extract_info.side_effect = [
+            DownloadError("Sign in to confirm you’re not a bot"),
+            {"url": "https://example.com/media", "protocol": "https", "vcodec": "avc1", "acodec": "aac"},
+        ]
+        response = self.client.get("/video/abcdefghijk.mp4", follow_redirects=False)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(extractor.extract_info.call_count, 2)
+        main.time.sleep.assert_called_once_with(3)
+        self.assertEqual(main.cooldown.until, 0)
 
     @patch.object(main, "YoutubeDL")
     def test_warning_preserves_rate_limit_cause(self, ydl):

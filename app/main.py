@@ -206,9 +206,23 @@ def extract(url, *, flat=False):
         }
         if not flat:
             options["format"] = FORMAT
-        with cookie_options() as cookies:
-            with YoutubeDL({**options, **cookies}) as ydl:
-                result = ydl.extract_info(url, download=False)
+        attempts = 1 if flat else 2
+        for attempt in range(attempts):
+            extraction_log = ExtractionLogger()
+            options["logger"] = extraction_log
+            try:
+                with cookie_options() as cookies:
+                    with YoutubeDL({**options, **cookies}) as ydl:
+                        result = ydl.extract_info(url, download=False)
+                break
+            except DownloadError as exc:
+                extraction_log.inspect(exc)
+                if attempt == 0 and extraction_log.block_reason == "YouTube requires sign-in verification from this server":
+                    log.warning("YouTube requested sign-in for %s; retrying once with a fresh PO Token", url)
+                    time.sleep(3)
+                    cooldown.check()
+                    continue
+                raise
         if result is None:
             raise HTTPException(404, "YouTube item unavailable")
         return result

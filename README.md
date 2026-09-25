@@ -200,7 +200,9 @@ requests have a one-second delay. These controls are per process, not per accoun
 or across replicas. Cache hits bypass pacing. A request may wait up to ten seconds;
 one overlapping request can wait up to 45 seconds for the resolver. Further
 concurrent requests return 503/Retry-After rather than building an unbounded queue.
-The existing five-minute failure cooldown is retained.
+For intermittent `Sign in to confirm you're not a bot` responses, video resolution
+is retried once after three seconds with a fresh extractor and PO Token. The
+five-minute failure cooldown starts only when that retry also fails.
 
 For a controlled deployment test, stop CarTV's playlist scanning and request two
 video IDs sequentially (allow the first request to finish before starting the next):
