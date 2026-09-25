@@ -199,12 +199,25 @@ def is_cartv_catalog_probe(request):
     return user_agent.startswith("CarTV/") and byte_range == "bytes=0-131071"
 
 
-def cached(cache, key, loader):
+def is_apple_media_probe(request):
+    """Recognize the tiny range requests CarTV delegates to AppleCoreMedia."""
+    user_agent = request.headers.get("user-agent", "")
+    byte_range = request.headers.get("range", "").strip().lower()
+    return user_agent.startswith("AppleCoreMedia/") and byte_range == "bytes=0-1"
+
+
+class ResolverBusy(Exception):
+    """An extraction could not enter the deliberately small upstream queue."""
+
+
+def cached(cache, key, loader, *, soft_busy=False):
     value = cache.get(key)
     if value is not None:
         return value
     lock = locks[hash((id(cache), key)) % len(locks)]
     if not lock.acquire(timeout=1):
+        if soft_busy:
+            raise ResolverBusy
         raise HTTPException(503, "Resolution in progress; retry shortly", headers={"Retry-After": "5"})
     try:
         value = cache.get(key)
@@ -216,14 +229,18 @@ def cached(cache, key, loader):
         lock.release()
 
 
-def extract(url, *, flat=False):
+def extract(url, *, flat=False, soft_busy=False):
     cooldown.check()
     if not extraction_queue_slots.acquire(blocking=False):
+        if soft_busy:
+            raise ResolverBusy
         raise HTTPException(503, "YouTube resolver queue is full; retry shortly", headers={"Retry-After": "15"})
     slot_acquired = False
     extraction_log = ExtractionLogger()
     try:
         if not extraction_slots.acquire(timeout=EXTRACTION_WAIT_SECONDS):
+            if soft_busy:
+                raise ResolverBusy
             raise HTTPException(503, "YouTube resolver wait timed out; retry shortly", headers={"Retry-After": "15"})
         slot_acquired = True
         cooldown.check()
@@ -321,8 +338,8 @@ def media_ttl(url):
         return 0  # Do not cache ambiguous expiry values.
 
 
-def load_video(video_id):
-    info = extract(f"https://www.youtube.com/watch?v={video_id}")
+def load_video(video_id, *, soft_busy=False):
+    info = extract(f"https://www.youtube.com/watch?v={video_id}", soft_busy=soft_busy)
     url = info.get("url")
     if (not url or info.get("requested_formats") or info.get("has_drm")
             or info.get("vcodec") in (None, "none")
@@ -368,5 +385,19 @@ def video(video_id: str, request: Request):
         log.info("Suppressed CarTV catalog probe id=%s", video_id)
         return Response(status_code=204, headers={"Cache-Control": "no-store"})
     if url is None:
-        url = cached(videos, video_id, lambda: load_video(video_id))
+        apple_probe = is_apple_media_probe(request)
+        try:
+            url = cached(
+                videos, video_id,
+                lambda: load_video(video_id, soft_busy=apple_probe),
+                soft_busy=apple_probe,
+            )
+        except ResolverBusy:
+            # CarTV asks AppleCoreMedia to inspect several playlist entries at
+            # once. One request is resolved and one may wait; answering extra
+            # speculative probes with 204 prevents a transient 503 from being
+            # shown as a playback error. A later request for the selected item
+            # resolves normally as soon as the small queue has room.
+            log.info("Suppressed AppleCoreMedia overflow probe id=%s", video_id)
+            return Response(status_code=204, headers={"Cache-Control": "no-store"})
     return RedirectResponse(url, status_code=302, headers={"Cache-Control": "no-store"})

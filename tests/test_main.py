@@ -208,6 +208,31 @@ class ServiceTests(unittest.TestCase):
         ydl.assert_called_once()
 
     @patch.object(main, "YoutubeDL")
+    def test_apple_core_media_overflow_probe_is_suppressed(self, ydl):
+        with patch.object(main, "extraction_queue_slots") as queue, patch.object(main, "extraction_slots") as slots:
+            queue.acquire.return_value = False
+            response = self.client.get(
+                "/video/abcdefghijk.mp4",
+                headers={"Range": "bytes=0-1", "User-Agent": "AppleCoreMedia/1.0.0 iPhone"},
+            )
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        slots.acquire.assert_not_called()
+        queue.release.assert_not_called()
+        ydl.assert_not_called()
+
+    @patch.object(main, "YoutubeDL")
+    def test_non_probe_apple_request_still_gets_busy_error(self, ydl):
+        with patch.object(main, "extraction_queue_slots") as queue:
+            queue.acquire.return_value = False
+            response = self.client.get(
+                "/video/abcdefghijk.mp4",
+                headers={"User-Agent": "AppleCoreMedia/1.0.0 iPhone"},
+            )
+        self.assertEqual(response.status_code, 503)
+        ydl.assert_not_called()
+
+    @patch.object(main, "YoutubeDL")
     def test_cached_video_redirects_even_for_cartv_catalog_probe(self, ydl):
         main.videos.put("abcdefghijk", "https://example.com/media", 120)
         response = self.client.get(
