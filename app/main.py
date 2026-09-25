@@ -1,5 +1,10 @@
 """YouTube metadata to M3U; media bytes never pass through this service."""
 import logging
+import math
+import os
+import shutil
+import tempfile
+from contextlib import contextmanager
 import re
 import threading
 import time
@@ -20,7 +25,79 @@ PLAYLIST_ID = re.compile(r"[A-Za-z0-9_-]{10,150}\Z")
 FORMAT = "best[ext=mp4][vcodec!=none][acodec!=none][protocol^=http]/best[vcodec!=none][acodec!=none][protocol^=http]"
 # Fixed lock stripes coalesce identical requests without an unbounded lock map.
 locks = [threading.Lock() for _ in range(64)]
-extraction_slots = threading.BoundedSemaphore(4)
+extraction_slots = threading.BoundedSemaphore(1)
+
+
+class UpstreamCooldown:
+    """Pause new upstream requests across all IDs after a YouTube block."""
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.until = 0
+        self.reason = "YouTube temporarily refused requests"
+
+    def trip(self, reason):
+        with self.lock:
+            self.until = max(self.until, time.monotonic() + 300)
+            self.reason = reason
+
+    def check(self):
+        with self.lock:
+            remaining = math.ceil(self.until - time.monotonic())
+            reason = self.reason
+        if remaining > 0:
+            raise HTTPException(503, reason + "; resolver paused temporarily", headers={
+                "Retry-After": str(remaining), "Cache-Control": "no-store",
+            })
+
+
+cooldown = UpstreamCooldown()
+
+
+class ExtractionLogger:
+    # yt-dlp can log HTTP 429/403 as a warning and later raise a generic error.
+    def __init__(self):
+        self.block_reason = None
+
+    def inspect(self, message):
+        message = str(message).lower()
+        if "not a bot" in message:
+            self.block_reason = "YouTube requires sign-in verification from this server"
+        elif "http error 429" in message or "too many requests" in message:
+            self.block_reason = "YouTube is rate limiting this server"
+        elif "http error 403" in message:
+            self.block_reason = "YouTube denied access from this server"
+        if self.block_reason:
+            cooldown.trip(self.block_reason)
+
+    def debug(self, message):
+        log.debug(message)
+
+    def warning(self, message):
+        self.inspect(message)
+        log.warning(message)
+
+    def error(self, message):
+        self.inspect(message)
+        log.error(message)
+
+
+@contextmanager
+def cookie_options():
+    source = os.environ.get("YOUTUBE_COOKIE_FILE")
+    if not source:
+        yield {}
+        return
+    # yt-dlp writes its cookie jar on close. Never modify the mounted secret.
+    with tempfile.TemporaryDirectory(prefix="youtube-cookies-") as directory:
+        target = os.path.join(directory, "cookies.txt")
+        try:
+            shutil.copyfile(source, target)
+            os.chmod(target, 0o600)
+        except OSError:
+            log.error("Unable to read configured YOUTUBE_COOKIE_FILE")
+            raise HTTPException(503, "YouTube cookie configuration is unavailable") from None
+        yield {"cookiefile": target}
+
 
 
 class Cache:
@@ -73,11 +150,14 @@ def cached(cache, key, loader):
 
 
 def extract(url, *, flat=False):
+    cooldown.check()
     if not extraction_slots.acquire(blocking=False):
         raise HTTPException(503, "YouTube resolver busy; retry shortly", headers={"Retry-After": "5"})
+    extraction_log = ExtractionLogger()
     try:
+        cooldown.check()
         options = {
-            "quiet": True, "no_warnings": True, "logger": log,
+            "quiet": True, "no_warnings": False, "logger": extraction_log,
             "cachedir": False, "skip_download": True,
             "socket_timeout": 15, "retries": 1, "extractor_retries": 1,
             "extract_flat": "in_playlist" if flat else False,
@@ -88,13 +168,17 @@ def extract(url, *, flat=False):
         }
         if not flat:
             options["format"] = FORMAT
-        with YoutubeDL(options) as ydl:
-            result = ydl.extract_info(url, download=False)
+        with cookie_options() as cookies:
+            with YoutubeDL({**options, **cookies}) as ydl:
+                result = ydl.extract_info(url, download=False)
         if result is None:
             raise HTTPException(404, "YouTube item unavailable")
         return result
     except DownloadError as exc:
         log.warning("YouTube extraction failed for %s: %s", url, exc)
+        extraction_log.inspect(exc)
+        if extraction_log.block_reason:
+            cooldown.check()
         message = str(exc).lower()
         if "requested format is not available" in message:
             raise HTTPException(502, "No playable single stream with both video and audio is available") from None

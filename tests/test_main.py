@@ -1,4 +1,7 @@
 import time
+import os
+import tempfile
+from pathlib import Path
 import unittest
 from unittest.mock import patch
 
@@ -10,6 +13,10 @@ from app import main
 
 class ServiceTests(unittest.TestCase):
     def setUp(self):
+        main.cooldown = main.UpstreamCooldown()
+        self.environment = patch.dict(os.environ, {}, clear=True)
+        self.environment.start()
+        self.addCleanup(self.environment.stop)
         main.playlists = main.Cache(128)
         main.videos = main.Cache(1024)
         self.client = TestClient(main.app, base_url="https://example.onrender.com")
@@ -90,6 +97,56 @@ class ServiceTests(unittest.TestCase):
             response = self.client.get("/video/abcdefghijk.mp4")
             self.assertEqual(response.status_code, status)
             self.assertNotIn("secret", response.text)
+
+    @patch.object(main, "YoutubeDL")
+    def test_block_pauses_other_ids_and_recovers(self, ydl):
+        extractor = ydl.return_value.__enter__.return_value
+        extractor.extract_info.side_effect = DownloadError("Sign in to confirm you’re not a bot")
+        response = self.client.get("/video/abcdefghijk.mp4")
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("sign-in verification", response.json()["detail"])
+        self.assertGreater(int(response.headers["retry-after"]), 0)
+        self.assertEqual(self.client.get("/video/12345678901.mp4").status_code, 503)
+        self.assertEqual(self.client.get("/health").status_code, 200)
+        self.assertEqual(extractor.extract_info.call_count, 1)
+        with patch.object(main.time, "monotonic", return_value=time.monotonic() + 301):
+            extractor.extract_info.side_effect = None
+            extractor.extract_info.return_value = {"entries": []}
+            self.assertEqual(self.client.get("/playlist/PL1234567890.m3u").status_code, 200)
+
+    @patch.object(main, "YoutubeDL")
+    def test_warning_preserves_rate_limit_cause(self, ydl):
+        def fail(*args, **kwargs):
+            ydl.call_args.args[0]["logger"].warning("Unable to download webpage: HTTP Error 429: Too Many Requests")
+            raise DownloadError("Failed to extract any player response")
+        ydl.return_value.__enter__.return_value.extract_info.side_effect = fail
+        response = self.client.get("/video/abcdefghijk.mp4")
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("rate limiting", response.json()["detail"])
+
+    def test_cached_urls_still_work_during_cooldown(self):
+        main.videos.put("abcdefghijk", "https://example.com/media", 120)
+        main.cooldown.trip("YouTube denied access")
+        self.assertEqual(self.client.get("/video/abcdefghijk.mp4", follow_redirects=False).status_code, 302)
+
+    def test_cookie_secret_is_copied_and_cleaned(self):
+        with tempfile.TemporaryDirectory() as directory:
+            source = Path(directory) / "secret.txt"
+            source.write_text("# Netscape HTTP Cookie File\n")
+            with patch.dict(os.environ, {"YOUTUBE_COOKIE_FILE": str(source)}):
+                with main.cookie_options() as options:
+                    target = Path(options["cookiefile"])
+                    self.assertNotEqual(target, source)
+                    self.assertEqual(target.read_text(), source.read_text())
+                    self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+                    target.write_text("changed")
+                self.assertFalse(target.exists())
+                self.assertEqual(source.read_text(), "# Netscape HTTP Cookie File\n")
+                with self.assertRaises(RuntimeError):
+                    with main.cookie_options() as options:
+                        target = Path(options["cookiefile"])
+                        raise RuntimeError("extraction failed")
+                self.assertFalse(target.exists())
 
     def test_busy(self):
         with patch.object(main, "extraction_slots") as slots:

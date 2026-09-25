@@ -14,8 +14,8 @@ media downloads, transcoding, merging, storage, or media proxying.
 Only validated IDs are accepted, never arbitrary extraction URLs. Flat playlist
 extraction avoids resolving every video's formats. Metadata is cached for 120
 seconds; media URLs for at most 900 seconds, shortened to 60 seconds before the
-URL's `expire` timestamp. Cache sizes are bounded, failed extractions are not
-cached, and caches are per process and disappear on restart. Responses use
+URL's `expire` timestamp. Cache sizes are bounded, failed results are not
+cached (upstream blocks activate a separate cooldown), and caches are per process and disappear on restart. Responses use
 `Cache-Control: no-store` so client/intermediary caching does not freeze playlists
 or redirects. A player must reload its M3U to see additions/removals after the
 metadata cache expires; no redeployment or manual M3U generation is needed.
@@ -123,7 +123,7 @@ IDs and recognized unavailable items return 404; extraction failures return 502.
 Busy resolution returns 503 with Retry-After. Error details stay in server logs.
 Health reports process availability, not YouTube availability.
 
-Up to four extractions run concurrently, with bounded socket timeouts/retries.
+One extraction runs at a time, with bounded socket timeouts/retries.
 These are not a hard total extraction deadline for very large playlists. Deploy
 one worker for shared in-memory caches; multiple instances have independent
 caches. For heavier public use, add rate limiting at your ingress.
@@ -131,3 +131,47 @@ caches. For heavier public use, add rate limiting at your ingress.
 References: [Render Docker](https://render.com/docs/docker),
 [Render Blueprint specification](https://render.com/docs/blueprint-spec),
 [yt-dlp JavaScript setup](https://github.com/yt-dlp/yt-dlp/wiki/EJS).
+
+
+## Recovering from YouTube bot checks / HTTP 429
+
+When YouTube reports a bot check, HTTP 429, or HTTP 403, the service pauses new
+YouTube extractions for five minutes across all IDs. Requests during that pause
+return 503 with a descriptive error and `Retry-After`. Valid cached media URLs
+and health checks still work. This prevents a player cycling through the playlist
+from continuously retrying YouTube. It does not remove a YouTube block. The
+cooldown is per process and resets on restart; use one worker/instance.
+
+First stop the player while troubleshooting. After deploying this change, test
+one video rather than loading the entire playlist. If the block persists, optional
+cookies may help, but cookies do not guarantee acceptance from Render or playback
+from a different network.
+
+To try cookies on Render:
+
+1. Export a YouTube-only Netscape-format cookies file following
+   [yt-dlp's YouTube export instructions](https://github.com/yt-dlp/yt-dlp/wiki/Extractors#exporting-youtube-cookies).
+   Treat it as an account credential. Do not paste it into chat or commit it.
+   Prefer a dedicated account with no private content: this service is public and
+   has no authentication, so anyone knowing an ID could request content accessible
+   to the configured account. yt-dlp warns of possible account restrictions.
+2. In Render, open **youtube-m3u → Environment → Secret Files → Add Secret File**.
+   Name it `youtube-cookies.txt` and put the exported file contents there.
+3. Add environment variable:
+   ```text
+   YOUTUBE_COOKIE_FILE=/etc/secrets/youtube-cookies.txt
+   ```
+4. Save and deploy. Test only:
+   ```bash
+   curl -I https://youtube-m3u.onrender.com/video/vN7auOEG00U.mp4
+   ```
+   A 302 means extraction succeeded. Then verify playback in the player.
+5. If it still reports bot verification/429, stop retries. Test the same service
+   on your home network to distinguish a deployment-network restriction. Do not
+   assume repeated redeploys or additional cookies will remove the block.
+
+The cookie option is disabled unless configured. Each extraction uses a private
+temporary copy so yt-dlp cannot overwrite Render's mounted secret; the copy is
+removed afterwards, including on errors. No media is downloaded or stored.
+Replace expired cookies through Render; remove the environment variable to disable
+authenticated extraction. [Render secret-file documentation](https://render.com/docs/configure-environment-variables#secret-files).
