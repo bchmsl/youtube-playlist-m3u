@@ -7,7 +7,7 @@ COPY --from=pot /app /opt/bgutil
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 PORT=8000 BGUTIL_SERVER_HOME=/opt/bgutil
 WORKDIR /app
 COPY requirements.txt .
-RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 \
+RUN apt-get update && apt-get install -y --no-install-recommends libstdc++6 libatomic1 \
     && rm -rf /var/lib/apt/lists/* \
     && pip install --no-cache-dir -r requirements.txt \
     && useradd --create-home --uid 10001 app
