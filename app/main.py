@@ -49,12 +49,12 @@ pacer = ExtractionPacer()
 
 
 def video_extractor_options():
-    server_home = os.environ.get("BGUTIL_SERVER_HOME")
-    if not server_home or not os.path.isfile(os.path.join(server_home, "build", "generate_once.js")):
+    server_url = os.environ.get("BGUTIL_SERVER_URL")
+    if not server_url:
         raise HTTPException(503, "PO Token provider is not installed; use the Docker image")
     return {
         "youtube": {"player_client": ["mweb"]},
-        "youtubepot-bgutilscript": {"server_home": [server_home]},
+        "youtubepot-bgutilhttp": {"base_url": [server_url]},
     }
 
 

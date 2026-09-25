@@ -41,6 +41,37 @@ if [ -n "${TS_AUTHKEY:-}" ] || [ -n "${TS_EXIT_NODE:-}" ]; then
     echo "Tailscale YouTube egress enabled through the configured exit node"
 fi
 
+bgutil_log=/tmp/bgutil.log
+deno run \
+    --allow-env \
+    --allow-net \
+    --allow-ffi=/opt/bgutil/node_modules \
+    --allow-read=/opt/bgutil/node_modules \
+    /opt/bgutil/src/main.ts \
+    --host 127.0.0.1 \
+    --port 4416 >"$bgutil_log" 2>&1 &
+bgutil_pid=$!
+
+attempts=0
+while ! python -c 'import urllib.request; urllib.request.urlopen("http://127.0.0.1:4416/ping", timeout=1).read()' 2>/dev/null; do
+    if ! kill -0 "$bgutil_pid" 2>/dev/null; then
+        cat "$bgutil_log" >&2
+        exit 1
+    fi
+    attempts=$((attempts + 1))
+    if [ "$attempts" -ge 20 ]; then
+        echo "Deno PO Token provider did not become ready" >&2
+        cat "$bgutil_log" >&2
+        exit 1
+    fi
+    sleep 1
+done
+if ! kill -0 "$bgutil_pid" 2>/dev/null; then
+    cat "$bgutil_log" >&2
+    exit 1
+fi
+echo "Deno PO Token provider started on localhost"
+
 exec uvicorn app.main:app \
     --host 0.0.0.0 \
     --port "${PORT:-8000}" \

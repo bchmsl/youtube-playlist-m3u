@@ -209,18 +209,18 @@ and [userspace networking documentation](https://tailscale.com/docs/concepts/use
 ## mweb + automatic PO Tokens
 
 The Docker image now includes the matching **bgutil provider and Python plugin
-2.0.0**, with Node.js for token generation and Deno for yt-dlp's JS challenges.
-Video extraction explicitly uses `mweb`. The provider runs on demand in the same
-container in script mode; no public token server, extra Render service, or manual
-token entry is required. Python still calls the yt-dlp API with `download=False`;
-the plugin's JavaScript subprocess only generates tokens. Cookies remain optional.
+2.0.0**, using Deno for both token generation and yt-dlp's JS challenges. Video
+extraction explicitly uses `mweb`. A private provider server runs on localhost in
+the same container; it is not exposed publicly and needs no extra Render service
+or manual token entry. The persistent server avoids starting a new JavaScript
+process for every request and works reliably with the Tailscale HTTP proxy. Python
+still calls the yt-dlp API with `download=False`. Cookies remain optional.
 
 Deploy the latest `master` commit on Render. Keep your existing cookie setting.
-`BGUTIL_SERVER_HOME=/opt/bgutil` is set in the image; do not override it in Render.
-No changes to `render.yaml` are needed. The Docker build checks that the provider
-script and both runtimes can start. The provider and its Python plugin must be
-updated together. Third-party provider code is GPL-3.0; retain its bundled notices
-when distributing the image.
+`BGUTIL_SERVER_URL=http://127.0.0.1:4416` is set in the image; do not override it
+in Render. No changes to `render.yaml` are needed. The provider and its Python
+plugin must be updated together. Third-party provider code is GPL-3.0; retain its
+bundled notices when distributing the image.
 
 New extraction starts are at least **10 seconds apart**, shared across playlist
 and video requests. One extraction runs at a time and internal extractor webpage
