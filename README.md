@@ -1,0 +1,133 @@
+# YouTube playlist → CarTV M3U
+
+Small Python 3.12 / FastAPI backend for public YouTube playlists. No frontend,
+media downloads, transcoding, merging, storage, or media proxying.
+
+- `GET /` and `GET /health`: `{"status":"ok"}`.
+- `GET /playlist/PLAYLIST_ID.m3u`: UTF-8 M3U in YouTube order, containing this
+  service's permanent `/video/VIDEO_ID.mp4` URLs. Unavailable entries are skipped.
+- `GET /video/VIDEO_ID.mp4`: HTTP 302 to a freshly resolved single stream with
+  video **and** audio. MP4 is preferred; another muxed container may be returned
+  by the fallback, despite the permanent `.mp4` route suffix.
+- Playlist and video routes also accept HEAD (including `curl -I`).
+
+Only validated IDs are accepted, never arbitrary extraction URLs. Flat playlist
+extraction avoids resolving every video's formats. Metadata is cached for 120
+seconds; media URLs for at most 900 seconds, shortened to 60 seconds before the
+URL's `expire` timestamp. Cache sizes are bounded, failed extractions are not
+cached, and caches are per process and disappear on restart. Responses use
+`Cache-Control: no-store` so client/intermediary caching does not freeze playlists
+or redirects. A player must reload its M3U to see additions/removals after the
+metadata cache expires; no redeployment or manual M3U generation is needed.
+
+## Run locally with Docker
+
+Install and start Docker, then run from this directory:
+
+```bash
+docker build -t youtube-m3u .
+docker run --rm -p 8000:8000 youtube-m3u
+```
+
+Open `http://localhost:8000/health`, then replace `PLAYLIST_ID` in:
+
+```text
+http://localhost:8000/playlist/PLAYLIST_ID.m3u
+```
+
+Copy the playlist ID from the `list=` parameter of a public YouTube playlist.
+Copy an 11-character video ID from a video's `v=` parameter.
+
+```bash
+curl -fsS http://localhost:8000/health
+curl -fsS http://localhost:8000/playlist/PLAYLIST_ID.m3u
+# Inspect the redirect without following it:
+curl -I http://localhost:8000/video/VIDEO_ID.mp4
+# Follow it and inspect upstream headers (does not download the video):
+curl -I -L http://localhost:8000/video/VIDEO_ID.mp4
+```
+
+Some media servers handle HEAD differently from GET. Actual playback in CarTV is
+the final check. A 302 alone verifies resolution, not playback from your network.
+
+## Deploy to Render
+
+1. Create an empty GitHub repository. In this project directory:
+   ```bash
+   git init
+   git add .
+   git commit -m "Add YouTube M3U backend"
+   git branch -M master
+   git remote add origin https://github.com/YOUR_USERNAME/youtube-playlist-m3u.git
+   git push -u origin master
+   ```
+   If `origin` already exists, check `git remote -v` and use the intended existing
+   remote, or change it with `git remote set-url origin YOUR_REPOSITORY_URL`.
+2. Sign in to Render, connect your GitHub account, choose **New → Blueprint**,
+   select the repository, and deploy the detected `render.yaml`.
+   The blueprint creates one Docker web service on the **paid Starter plan**
+   to avoid free-tier idle spin-down. No persistent disk or secrets are needed.
+   Alternatively choose **New → Web Service**, connect the repo, select Docker,
+   use `./Dockerfile`, choose your plan, and set health check path `/health`.
+3. Wait for the deploy to become live. Copy the public `https://...onrender.com`
+   URL from the service dashboard; the name may differ from `youtube-m3u`.
+4. Open `https://YOUR_HOST.onrender.com/health`; expect `{"status":"ok"}`.
+5. Test a real playlist and a video redirect using the curl commands above with
+   that host. Add this URL to CarTV:
+   ```text
+   https://youtube-m3u.onrender.com/playlist/PLxxxx.m3u
+   ```
+   Replace the host with your assigned Render host and `PLxxxx` with the full ID.
+
+The Docker command binds `0.0.0.0` and uses `$PORT` (default 8000). Uvicorn trusts
+forwarded proxy headers so Render HTTPS requests generate HTTPS M3U links. This
+container is intended to sit behind Render's trusted reverse proxy. When exposing
+it directly on another server, restrict `--forwarded-allow-ips` to that proxy's
+IP(s) instead of `*`. URLs use the incoming Host; no hostname is hardcoded.
+
+## Tests without Docker
+
+With Python 3.12 installed:
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+python -m pip install -r requirements-dev.txt
+python -m compileall -q app tests
+python -m unittest discover -s tests -v
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+For real video resolution outside Docker, install Deno on PATH as well. Tests
+mock YouTube and do not need Deno or network access. Docker includes Deno and
+`yt-dlp[default]`, including its supported EJS challenge scripts.
+
+## Operational limits
+
+YouTube changes extraction frequently. Dependencies have lower bounds rather
+than a frozen lock so clean rebuilds can pick up yt-dlp fixes. To update a deployed
+service, use Render's **Clear build cache & deploy**; rerun tests after updates.
+For locally refreshed dependencies: `docker build --pull --no-cache -t youtube-m3u .`.
+
+YouTube may block Render/datacenter IPs, require sign-in or additional tokens,
+restrict content geographically, or return signed URLs bound to the resolver's
+IP or requiring headers the player does not send. A redirect cannot transfer the
+server's IP, cookies, or headers to CarTV. Therefore this architecture cannot
+guarantee playback for every public video or network. There is deliberately no
+proxy/download fallback. Test from your actual player after deployment.
+
+A muxed format may be lower resolution or absent; DASH-only and manifest results
+return 502. Flat metadata cannot discover every playback restriction, so a listed
+item can still fail when opened. Invalid playlist IDs return 400; invalid video
+IDs and recognized unavailable items return 404; extraction failures return 502.
+Busy resolution returns 503 with Retry-After. Error details stay in server logs.
+Health reports process availability, not YouTube availability.
+
+Up to four extractions run concurrently, with bounded socket timeouts/retries.
+These are not a hard total extraction deadline for very large playlists. Deploy
+one worker for shared in-memory caches; multiple instances have independent
+caches. For heavier public use, add rate limiting at your ingress.
+
+References: [Render Docker](https://render.com/docs/docker),
+[Render Blueprint specification](https://render.com/docs/blueprint-spec),
+[yt-dlp JavaScript setup](https://github.com/yt-dlp/yt-dlp/wiki/EJS).
