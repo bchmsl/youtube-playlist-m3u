@@ -178,6 +178,41 @@ class ServiceTests(unittest.TestCase):
         self.assertIn("burst_unique_10s=2", output)
 
     @patch.object(main, "YoutubeDL")
+    def test_cartv_catalog_probe_does_not_resolve_uncached_video(self, ydl):
+        response = self.client.get(
+            "/video/abcdefghijk.mp4",
+            headers={"Range": "bytes=0-131071", "User-Agent": "CarTV/21 CFNetwork/3896"},
+        )
+        self.assertEqual(response.status_code, 204)
+        self.assertEqual(response.headers["cache-control"], "no-store")
+        ydl.assert_not_called()
+
+    @patch.object(main, "YoutubeDL")
+    def test_apple_core_media_playback_request_still_resolves(self, ydl):
+        extractor = ydl.return_value.__enter__.return_value
+        extractor.extract_info.return_value = {
+            "url": "https://example.com/media", "protocol": "https",
+            "vcodec": "avc1", "acodec": "aac",
+        }
+        response = self.client.get(
+            "/video/abcdefghijk.mp4", follow_redirects=False,
+            headers={"Range": "bytes=0-1", "User-Agent": "AppleCoreMedia/1.0.0 iPhone"},
+        )
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.headers["location"], "https://example.com/media")
+        ydl.assert_called_once()
+
+    @patch.object(main, "YoutubeDL")
+    def test_cached_video_redirects_even_for_cartv_catalog_probe(self, ydl):
+        main.videos.put("abcdefghijk", "https://example.com/media", 120)
+        response = self.client.get(
+            "/video/abcdefghijk.mp4", follow_redirects=False,
+            headers={"Range": "bytes=0-131071", "User-Agent": "CarTV/21 CFNetwork/3896"},
+        )
+        self.assertEqual(response.status_code, 302)
+        ydl.assert_not_called()
+
+    @patch.object(main, "YoutubeDL")
     def test_recovered_warning_does_not_pause_next_video(self, ydl):
         def recover(*args, **kwargs):
             ydl.call_args.args[0]["logger"].warning("HTTP Error 403: Forbidden")

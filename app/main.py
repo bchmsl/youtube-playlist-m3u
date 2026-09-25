@@ -195,6 +195,13 @@ class VideoRequestDiagnostics:
 video_request_diagnostics = VideoRequestDiagnostics()
 
 
+def is_cartv_catalog_probe(request):
+    """Recognize CarTV's eager full-playlist metadata scan."""
+    user_agent = request.headers.get("user-agent", "")
+    byte_range = request.headers.get("range", "").strip().lower()
+    return user_agent.startswith("CarTV/") and byte_range == "bytes=0-131071"
+
+
 def cached(cache, key, loader):
     value = cache.get(key)
     if value is not None:
@@ -354,6 +361,12 @@ def video(video_id: str, request: Request):
         raise HTTPException(404, "Invalid video ID")
     url = videos.get(video_id)
     video_request_diagnostics.observe(request, video_id, url is not None)
+    # CarTV probes every playlist entry concurrently with this signature. A
+    # later, user-initiated playback request comes from AppleCoreMedia. Avoid
+    # resolving hundreds of unused URLs, while still redirecting cache hits.
+    if url is None and is_cartv_catalog_probe(request):
+        log.info("Suppressed CarTV catalog probe id=%s", video_id)
+        return Response(status_code=204, headers={"Cache-Control": "no-store"})
     if url is None:
         url = cached(videos, video_id, lambda: load_video(video_id))
     return RedirectResponse(url, status_code=302, headers={"Cache-Control": "no-store"})

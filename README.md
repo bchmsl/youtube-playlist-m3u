@@ -209,7 +209,10 @@ extraction: HTTP method, Range and Accept headers, a sanitized User-Agent, cache
 status, time since that client's previous request, and the number of distinct
 video IDs requested by that client in the preceding ten seconds. This contains
 no cookie or media URL data. Use these fields to distinguish player playlist
-scans from real playback before enabling scan suppression.
+scans from real playback. CarTV's observed full-playlist catalog probe uses a
+`CarTV/*` User-Agent with `Range: bytes=0-131071`; uncached requests matching
+that signature receive an empty 204 response without contacting YouTube. The
+later AppleCoreMedia request made for playback resolves the selected video.
 
 For a controlled deployment test, stop CarTV's playlist scanning and request two
 video IDs sequentially (allow the first request to finish before starting the next):
