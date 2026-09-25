@@ -400,4 +400,11 @@ def video(video_id: str, request: Request):
             # resolves normally as soon as the small queue has room.
             log.info("Suppressed AppleCoreMedia overflow probe id=%s", video_id)
             return Response(status_code=204, headers={"Cache-Control": "no-store"})
-    return RedirectResponse(url, status_code=302, headers={"Cache-Control": "no-store"})
+    # 307 makes media clients preserve the original GET/HEAD method and Range
+    # header across the cross-host redirect. Some AVFoundation-based IPTV
+    # players fail progressive MP4 probing after a conventional 302.
+    return RedirectResponse(url, status_code=307, headers={
+        "Cache-Control": "no-store",
+        "Content-Type": "video/mp4",
+        "Accept-Ranges": "bytes",
+    })

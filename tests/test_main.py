@@ -69,9 +69,11 @@ class ServiceTests(unittest.TestCase):
         extractor.extract_info.return_value = {"url": url, "protocol": "https", "vcodec": "avc1", "acodec": "mp4a"}
         for method in (self.client.get, self.client.head):
             response = method("/video/abcdefghijk.mp4", follow_redirects=False)
-            self.assertEqual(response.status_code, 302)
+            self.assertEqual(response.status_code, 307)
             self.assertEqual(response.headers["location"], url)
             self.assertEqual(response.headers["cache-control"], "no-store")
+            self.assertEqual(response.headers["content-type"], "video/mp4")
+            self.assertEqual(response.headers["accept-ranges"], "bytes")
         extractor.extract_info.assert_called_once_with("https://www.youtube.com/watch?v=abcdefghijk", download=False)
         self.assertEqual(ydl.call_args.args[0]["format"], main.FORMAT)
         self.assertEqual(ydl.call_args.args[0]["extractor_args"]["youtube"]["player_client"], ["android_vr"])
@@ -87,7 +89,7 @@ class ServiceTests(unittest.TestCase):
         }
         with patch.dict(os.environ, {"YOUTUBE_PROXY": "http://127.0.0.1:1055"}):
             response = self.client.get("/video/abcdefghijk.mp4", follow_redirects=False)
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 307)
         self.assertEqual(ydl.call_args.args[0]["proxy"], "http://127.0.0.1:1055")
 
     def test_ttl_and_eviction(self):
@@ -145,7 +147,7 @@ class ServiceTests(unittest.TestCase):
             {"url": "https://example.com/media", "protocol": "https", "vcodec": "avc1", "acodec": "aac"},
         ]
         response = self.client.get("/video/abcdefghijk.mp4", follow_redirects=False)
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 307)
         self.assertEqual(extractor.extract_info.call_count, 2)
         main.time.sleep.assert_called_once_with(3)
         self.assertEqual(main.cooldown.until, 0)
@@ -163,7 +165,7 @@ class ServiceTests(unittest.TestCase):
     def test_cached_urls_still_work_during_cooldown(self):
         main.videos.put("abcdefghijk", "https://example.com/media", 120)
         main.cooldown.trip("YouTube denied access")
-        self.assertEqual(self.client.get("/video/abcdefghijk.mp4", follow_redirects=False).status_code, 302)
+        self.assertEqual(self.client.get("/video/abcdefghijk.mp4", follow_redirects=False).status_code, 307)
 
     def test_video_request_fingerprint_logs_scan_signals(self):
         for video_id in ("abcdefghijk", "12345678901"):
@@ -174,7 +176,7 @@ class ServiceTests(unittest.TestCase):
                 headers={"Range": "bytes=0-1", "User-Agent": "CarTV\nProbe", "Accept": "video/mp4"},
             )
             second = self.client.head("/video/12345678901.mp4", follow_redirects=False)
-        self.assertEqual((first.status_code, second.status_code), (302, 302))
+        self.assertEqual((first.status_code, second.status_code), (307, 307))
         output = "\n".join(captured.output)
         self.assertIn("method=GET", output)
         self.assertIn("range='bytes=0-1'", output)
@@ -203,7 +205,7 @@ class ServiceTests(unittest.TestCase):
             "/video/abcdefghijk.mp4", follow_redirects=False,
             headers={"Range": "bytes=0-1", "User-Agent": "AppleCoreMedia/1.0.0 iPhone"},
         )
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 307)
         self.assertEqual(response.headers["location"], "https://example.com/media")
         ydl.assert_called_once()
 
@@ -239,7 +241,7 @@ class ServiceTests(unittest.TestCase):
             "/video/abcdefghijk.mp4", follow_redirects=False,
             headers={"Range": "bytes=0-131071", "User-Agent": "CarTV/21 CFNetwork/3896"},
         )
-        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.status_code, 307)
         ydl.assert_not_called()
 
     @patch.object(main, "YoutubeDL")
@@ -251,7 +253,7 @@ class ServiceTests(unittest.TestCase):
         extractor.extract_info.side_effect = recover
         for video_id in ("abcdefghijk", "12345678901"):
             response = self.client.get(f"/video/{video_id}.mp4", follow_redirects=False)
-            self.assertEqual(response.status_code, 302)
+            self.assertEqual(response.status_code, 307)
         self.assertEqual(extractor.extract_info.call_count, 2)
 
     def test_cookie_secret_is_copied_and_cleaned(self):
