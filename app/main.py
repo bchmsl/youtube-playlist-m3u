@@ -28,6 +28,31 @@ locks = [threading.Lock() for _ in range(64)]
 extraction_slots = threading.BoundedSemaphore(1)
 
 
+class ExtractionPacer:
+    # Called only while holding extraction_slots. Cached results bypass this.
+    def __init__(self):
+        self.next_start = 0
+
+    def wait(self):
+        delay = max(0, self.next_start - time.monotonic())
+        if delay:
+            time.sleep(delay)
+        self.next_start = time.monotonic() + 10
+
+
+pacer = ExtractionPacer()
+
+
+def video_extractor_options():
+    server_home = os.environ.get("BGUTIL_SERVER_HOME")
+    if not server_home or not os.path.isfile(os.path.join(server_home, "build", "generate_once.js")):
+        raise HTTPException(503, "PO Token provider is not installed; use the Docker image")
+    return {
+        "youtube": {"player_client": ["mweb"]},
+        "youtubepot-bgutilscript": {"server_home": [server_home]},
+    }
+
+
 class UpstreamCooldown:
     """Pause new upstream requests across all IDs after a YouTube block."""
     def __init__(self):
@@ -155,10 +180,15 @@ def extract(url, *, flat=False):
     extraction_log = ExtractionLogger()
     try:
         cooldown.check()
+        extractor_args = {} if flat else video_extractor_options()
+        pacer.wait()
+        cooldown.check()
         options = {
             "quiet": True, "no_warnings": False, "logger": extraction_log,
             "cachedir": False, "skip_download": True,
             "socket_timeout": 15, "retries": 1, "extractor_retries": 1,
+            "sleep_interval_requests": 1,
+            "extractor_args": extractor_args,
             "extract_flat": "in_playlist" if flat else False,
             # Flat extraction does not resolve individual videos. Filter unavailable
             # entries below, but propagate playlist/network extraction failures.

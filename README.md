@@ -98,8 +98,8 @@ python -m unittest discover -s tests -v
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-For real video resolution outside Docker, install Deno on PATH as well. Tests
-mock YouTube and do not need Deno or network access. Docker includes Deno and
+For real video resolution, use Docker; the image includes the PO Token provider. Tests
+mock YouTube and do not need JavaScript runtimes or network access. Docker includes Deno and
 `yt-dlp[default]`, including its supported EJS challenge scripts.
 
 ## Operational limits
@@ -176,3 +176,45 @@ temporary copy so yt-dlp cannot overwrite Render's mounted secret; the copy is
 removed afterwards, including on errors. No media is downloaded or stored.
 Replace expired cookies through Render; remove the environment variable to disable
 authenticated extraction. [Render secret-file documentation](https://render.com/docs/configure-environment-variables#secret-files).
+
+
+## mweb + automatic PO Tokens
+
+The Docker image now includes the matching **bgutil provider and Python plugin
+2.0.0**, with Node.js for token generation and Deno for yt-dlp's JS challenges.
+Video extraction explicitly uses `mweb`. The provider runs on demand in the same
+container in script mode; no public token server, extra Render service, or manual
+token entry is required. Python still calls the yt-dlp API with `download=False`;
+the plugin's JavaScript subprocess only generates tokens. Cookies remain optional.
+
+Deploy the latest `master` commit on Render. Keep your existing cookie setting.
+`BGUTIL_SERVER_HOME=/opt/bgutil` is set in the image; do not override it in Render.
+No changes to `render.yaml` are needed. The Docker build checks that the provider
+script and both runtimes can start. The provider and its Python plugin must be
+updated together. Third-party provider code is GPL-3.0; retain its bundled notices
+when distributing the image.
+
+New extraction starts are at least **10 seconds apart**, shared across playlist
+and video requests. One extraction runs at a time and internal extractor webpage
+requests have a one-second delay. These controls are per process, not per account
+or across replicas. Cache hits bypass pacing. A request may wait up to ten seconds;
+concurrent requests return 503/Retry-After rather than building an unbounded queue.
+The existing five-minute failure cooldown is retained.
+
+For a controlled deployment test, stop CarTV's playlist scanning and request two
+video IDs sequentially (allow the first request to finish before starting the next):
+
+```bash
+curl --max-time 90 -I https://youtube-m3u.onrender.com/video/vN7auOEG00U.mp4
+# Replace SECOND_VIDEO_ID with another real 11-character ID:
+curl --max-time 90 -I https://youtube-m3u.onrender.com/video/SECOND_VIDEO_ID.mp4
+```
+
+A 302 on each proves resolution only; play both from CarTV to verify audio/video
+and access from the player's network. PO Tokens do not guarantee removal of IP
+blocks, bot checks, or availability of a muxed format. No DASH merging or media
+proxying fallback has been added. If the test fails, use the first extraction
+failure in Render logs rather than repeated retries.
+
+References: [yt-dlp PO Token guide](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide),
+[bgutil provider setup](https://github.com/Brainicism/bgutil-ytdlp-pot-provider).

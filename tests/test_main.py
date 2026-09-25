@@ -19,6 +19,15 @@ class ServiceTests(unittest.TestCase):
         self.addCleanup(self.environment.stop)
         main.playlists = main.Cache(128)
         main.videos = main.Cache(1024)
+        self.provider_dir = tempfile.TemporaryDirectory()
+        self.addCleanup(self.provider_dir.cleanup)
+        build = Path(self.provider_dir.name) / "build"
+        build.mkdir()
+        (build / "generate_once.js").write_text("// test fixture")
+        os.environ["BGUTIL_SERVER_HOME"] = self.provider_dir.name
+        self.pacing = patch.object(main.pacer, "wait")
+        self.pacing.start()
+        self.addCleanup(self.pacing.stop)
         self.client = TestClient(main.app, base_url="https://example.onrender.com")
 
     def test_health(self):
@@ -67,6 +76,10 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(response.headers["cache-control"], "no-store")
         extractor.extract_info.assert_called_once_with("https://www.youtube.com/watch?v=abcdefghijk", download=False)
         self.assertEqual(ydl.call_args.args[0]["format"], main.FORMAT)
+        self.assertEqual(ydl.call_args.args[0]["extractor_args"]["youtube"]["player_client"], ["mweb"])
+        self.assertEqual(ydl.call_args.args[0]["extractor_args"]["youtubepot-bgutilscript"]["server_home"], [self.provider_dir.name])
+        self.assertEqual(ydl.call_args.args[0]["sleep_interval_requests"], 1)
+        self.assertEqual(main.pacer.wait.call_count, 1)
 
     def test_ttl_and_eviction(self):
         with patch.object(main.time, "time", return_value=1000):
@@ -159,6 +172,27 @@ class ServiceTests(unittest.TestCase):
                         target = Path(options["cookiefile"])
                         raise RuntimeError("extraction failed")
                 self.assertFalse(target.exists())
+
+    def test_extraction_start_spacing(self):
+        pacer = main.ExtractionPacer()
+        with patch.object(main.time, "monotonic", return_value=100), patch.object(main.time, "sleep") as sleep:
+            pacer.wait()
+            sleep.assert_not_called()
+        with patch.object(main.time, "monotonic", side_effect=[104, 110]), patch.object(main.time, "sleep") as sleep:
+            pacer.wait()
+            sleep.assert_called_once_with(6)
+            self.assertEqual(pacer.next_start, 120)
+        with patch.object(main.time, "monotonic", return_value=130), patch.object(main.time, "sleep") as sleep:
+            pacer.wait()
+            sleep.assert_not_called()
+
+    @patch.object(main, "YoutubeDL")
+    def test_missing_provider_fails_clearly(self, ydl):
+        with patch.dict(os.environ, {"BGUTIL_SERVER_HOME": "/missing-provider"}):
+            response = self.client.get("/video/abcdefghijk.mp4")
+        self.assertEqual(response.status_code, 503)
+        self.assertIn("PO Token provider", response.json()["detail"])
+        ydl.assert_not_called()
 
     def test_busy(self):
         with patch.object(main, "extraction_slots") as slots:
