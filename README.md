@@ -99,9 +99,9 @@ python -m unittest discover -s tests -v
 uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
 
-For real video resolution, use Docker; the image includes the PO Token provider. Tests
-mock YouTube and do not need JavaScript runtimes or network access. Docker includes Deno and
-`yt-dlp[default]`, including its supported EJS challenge scripts.
+For real video resolution, use Docker. Tests mock YouTube and do not need
+JavaScript runtimes or network access. Docker includes Deno and `yt-dlp[default]`,
+including its supported EJS challenge scripts.
 
 ## Operational limits
 
@@ -206,21 +206,17 @@ See Tailscale's [exit-node instructions](https://tailscale.com/docs/features/exi
 and [userspace networking documentation](https://tailscale.com/docs/concepts/userspace-networking).
 
 
-## mweb + automatic PO Tokens
+## YouTube player client
 
-The Docker image now includes the matching **bgutil provider and Python plugin
-2.0.0**, using Deno for both token generation and yt-dlp's JS challenges. Video
-extraction explicitly uses `mweb`. A private provider server runs on localhost in
-the same container; it is not exposed publicly and needs no extra Render service
-or manual token entry. The persistent server avoids starting a new JavaScript
-process for every request and works reliably with the Tailscale HTTP proxy. Python
-still calls the yt-dlp API with `download=False`. Cookies remain optional.
+Video extraction uses yt-dlp's `android_vr` player client. It currently exposes
+ordinary muxed HTTP formats without a GVS PO Token, avoiding the web BotGuard
+provider requests that can stall through a Tailscale HTTP proxy. Deno remains in
+the image for yt-dlp's supported JavaScript challenge handling. Python still calls
+the yt-dlp API with `download=False`, and cookies remain optional.
 
-Deploy the latest `master` commit on Render. Keep your existing cookie setting.
-`BGUTIL_SERVER_URL=http://127.0.0.1:4416` is set in the image; do not override it
-in Render. No changes to `render.yaml` are needed. The provider and its Python
-plugin must be updated together. Third-party provider code is GPL-3.0; retain its
-bundled notices when distributing the image.
+One known limitation is that YouTube videos marked **Made for Kids** are not
+available through `android_vr`. Such a video returns a useful upstream extraction
+error; the service still never downloads, merges, or proxies media bytes.
 
 New extraction starts are at least **10 seconds apart**, shared across playlist
 and video requests. One extraction runs at a time and internal extractor webpage
@@ -229,7 +225,7 @@ or across replicas. Cache hits bypass pacing. A request may wait up to ten secon
 one overlapping request can wait up to 45 seconds for the resolver. Further
 concurrent requests return 503/Retry-After rather than building an unbounded queue.
 For intermittent `Sign in to confirm you're not a bot` responses, video resolution
-is retried once after three seconds with a fresh extractor and PO Token. The
+is retried once after three seconds with a fresh extractor session. The
 five-minute failure cooldown starts only when that retry also fails.
 
 Each `/video` request logs a bounded diagnostic fingerprint before upstream
@@ -252,10 +248,9 @@ curl --max-time 90 -I https://youtube-m3u.onrender.com/video/SECOND_VIDEO_ID.mp4
 ```
 
 A 302 on each proves resolution only; play both from CarTV to verify audio/video
-and access from the player's network. PO Tokens do not guarantee removal of IP
-blocks, bot checks, or availability of a muxed format. No DASH merging or media
+and access from the player's network. YouTube may still apply IP blocks or bot
+checks, and some videos may not expose a muxed format. No DASH merging or media
 proxying fallback has been added. If the test fails, use the first extraction
 failure in Render logs rather than repeated retries.
 
-References: [yt-dlp PO Token guide](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide),
-[bgutil provider setup](https://github.com/Brainicism/bgutil-ytdlp-pot-provider).
+Reference: [yt-dlp PO Token guide](https://github.com/yt-dlp/yt-dlp/wiki/PO-Token-Guide).

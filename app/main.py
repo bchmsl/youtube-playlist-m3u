@@ -49,13 +49,10 @@ pacer = ExtractionPacer()
 
 
 def video_extractor_options():
-    server_url = os.environ.get("BGUTIL_SERVER_URL")
-    if not server_url:
-        raise HTTPException(503, "PO Token provider is not installed; use the Docker image")
-    return {
-        "youtube": {"player_client": ["mweb"]},
-        "youtubepot-bgutilhttp": {"base_url": [server_url]},
-    }
+    # android_vr currently exposes the ordinary muxed HTTP formats without a
+    # GVS PO Token. It is especially useful when extraction egresses through a
+    # phone, where running a web BotGuard provider through the proxy can stall.
+    return {"youtube": {"player_client": ["android_vr"]}}
 
 
 class UpstreamCooldown:
@@ -262,7 +259,7 @@ def extract(url, *, flat=False):
             except DownloadError as exc:
                 extraction_log.inspect(exc)
                 if attempt == 0 and extraction_log.block_reason == "YouTube requires sign-in verification from this server":
-                    log.warning("YouTube requested sign-in for %s; retrying once with a fresh PO Token", url)
+                    log.warning("YouTube requested sign-in for %s; retrying once with a fresh extractor session", url)
                     time.sleep(3)
                     cooldown.check()
                     continue

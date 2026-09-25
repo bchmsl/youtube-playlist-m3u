@@ -20,7 +20,6 @@ class ServiceTests(unittest.TestCase):
         main.playlists = main.Cache(128)
         main.videos = main.Cache(1024)
         main.video_request_diagnostics = main.VideoRequestDiagnostics()
-        os.environ["BGUTIL_SERVER_URL"] = "http://127.0.0.1:4416"
         self.pacing = patch.object(main.pacer, "wait")
         self.pacing.start()
         self.addCleanup(self.pacing.stop)
@@ -75,8 +74,7 @@ class ServiceTests(unittest.TestCase):
             self.assertEqual(response.headers["cache-control"], "no-store")
         extractor.extract_info.assert_called_once_with("https://www.youtube.com/watch?v=abcdefghijk", download=False)
         self.assertEqual(ydl.call_args.args[0]["format"], main.FORMAT)
-        self.assertEqual(ydl.call_args.args[0]["extractor_args"]["youtube"]["player_client"], ["mweb"])
-        self.assertEqual(ydl.call_args.args[0]["extractor_args"]["youtubepot-bgutilhttp"]["base_url"], ["http://127.0.0.1:4416"])
+        self.assertEqual(ydl.call_args.args[0]["extractor_args"]["youtube"]["player_client"], ["android_vr"])
         self.assertEqual(ydl.call_args.args[0]["sleep_interval_requests"], 1)
         self.assertEqual(main.pacer.wait.call_count, 1)
 
@@ -262,14 +260,6 @@ class ServiceTests(unittest.TestCase):
         with patch.object(main.time, "monotonic", return_value=130), patch.object(main.time, "sleep") as sleep:
             pacer.wait()
             sleep.assert_not_called()
-
-    @patch.object(main, "YoutubeDL")
-    def test_missing_provider_fails_clearly(self, ydl):
-        with patch.dict(os.environ, {"BGUTIL_SERVER_URL": ""}):
-            response = self.client.get("/video/abcdefghijk.mp4")
-        self.assertEqual(response.status_code, 503)
-        self.assertIn("PO Token provider", response.json()["detail"])
-        ydl.assert_not_called()
 
     def test_busy(self):
         with patch.object(main, "extraction_slots") as slots:
