@@ -129,6 +129,18 @@ class ServiceTests(unittest.TestCase):
         main.cooldown.trip("YouTube denied access")
         self.assertEqual(self.client.get("/video/abcdefghijk.mp4", follow_redirects=False).status_code, 302)
 
+    @patch.object(main, "YoutubeDL")
+    def test_recovered_warning_does_not_pause_next_video(self, ydl):
+        def recover(*args, **kwargs):
+            ydl.call_args.args[0]["logger"].warning("HTTP Error 403: Forbidden")
+            return {"url": "https://example.com/media", "protocol": "https", "vcodec": "avc1", "acodec": "aac"}
+        extractor = ydl.return_value.__enter__.return_value
+        extractor.extract_info.side_effect = recover
+        for video_id in ("abcdefghijk", "12345678901"):
+            response = self.client.get(f"/video/{video_id}.mp4", follow_redirects=False)
+            self.assertEqual(response.status_code, 302)
+        self.assertEqual(extractor.extract_info.call_count, 2)
+
     def test_cookie_secret_is_copied_and_cleaned(self):
         with tempfile.TemporaryDirectory() as directory:
             source = Path(directory) / "secret.txt"

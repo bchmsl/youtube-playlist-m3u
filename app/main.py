@@ -66,8 +66,7 @@ class ExtractionLogger:
             self.block_reason = "YouTube is rate limiting this server"
         elif "http error 403" in message:
             self.block_reason = "YouTube denied access from this server"
-        if self.block_reason:
-            cooldown.trip(self.block_reason)
+        # Record warnings only: yt-dlp may recover using another player client.
 
     def debug(self, message):
         log.debug(message)
@@ -178,6 +177,7 @@ def extract(url, *, flat=False):
         log.warning("YouTube extraction failed for %s: %s", url, exc)
         extraction_log.inspect(exc)
         if extraction_log.block_reason:
+            cooldown.trip(extraction_log.block_reason)
             cooldown.check()
         message = str(exc).lower()
         if "requested format is not available" in message:

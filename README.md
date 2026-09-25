@@ -135,12 +135,13 @@ References: [Render Docker](https://render.com/docs/docker),
 
 ## Recovering from YouTube bot checks / HTTP 429
 
-When YouTube reports a bot check, HTTP 429, or HTTP 403, the service pauses new
+When extraction fails after a bot check, HTTP 429, or HTTP 403, the service pauses new
 YouTube extractions for five minutes across all IDs. Requests during that pause
 return 503 with a descriptive error and `Retry-After`. Valid cached media URLs
 and health checks still work. This prevents a player cycling through the playlist
 from continuously retrying YouTube. It does not remove a YouTube block. The
 cooldown is per process and resets on restart; use one worker/instance.
+Warnings that yt-dlp recovers from do not trigger the cooldown.
 
 First stop the player while troubleshooting. After deploying this change, test
 one video rather than loading the entire playlist. If the block persists, optional
