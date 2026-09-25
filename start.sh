@@ -12,6 +12,7 @@ if [ -n "${TS_AUTHKEY:-}" ] || [ -n "${TS_EXIT_NODE:-}" ]; then
     tailscaled \
         --tun=userspace-networking \
         --socks5-server=127.0.0.1:1055 \
+        --outbound-http-proxy-listen=127.0.0.1:1055 \
         --state=mem: \
         --socket="$ts_socket" >"$ts_log" 2>&1 &
     ts_pid=$!
@@ -36,7 +37,7 @@ if [ -n "${TS_AUTHKEY:-}" ] || [ -n "${TS_EXIT_NODE:-}" ]; then
         --hostname="${TS_HOSTNAME:-render-youtube-m3u}" \
         --accept-dns=false \
         --exit-node="$TS_EXIT_NODE"
-    export YOUTUBE_PROXY=socks5://127.0.0.1:1055
+    export YOUTUBE_PROXY=http://127.0.0.1:1055
     echo "Tailscale YouTube egress enabled through the configured exit node"
 fi
 

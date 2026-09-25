@@ -201,7 +201,7 @@ The iPhone must remain online with Tailscale connected while resolving videos.
 
 If either `TS_AUTHKEY` or `TS_EXIT_NODE` is absent, Tailscale stays disabled and
 the service behaves as before. This uses Tailscale userspace networking and a
-local SOCKS5 proxy, so Render does not need a TUN device or persistent disk.
+local HTTP CONNECT proxy, so Render does not need a TUN device or persistent disk.
 See Tailscale's [exit-node instructions](https://tailscale.com/docs/features/exit-nodes?tab=ios)
 and [userspace networking documentation](https://tailscale.com/docs/concepts/userspace-networking).
 

@@ -92,10 +92,10 @@ class ServiceTests(unittest.TestCase):
             "url": "https://example.com/media", "protocol": "https",
             "vcodec": "avc1", "acodec": "aac",
         }
-        with patch.dict(os.environ, {"YOUTUBE_PROXY": "socks5://127.0.0.1:1055"}):
+        with patch.dict(os.environ, {"YOUTUBE_PROXY": "http://127.0.0.1:1055"}):
             response = self.client.get("/video/abcdefghijk.mp4", follow_redirects=False)
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(ydl.call_args.args[0]["proxy"], "socks5://127.0.0.1:1055")
+        self.assertEqual(ydl.call_args.args[0]["proxy"], "http://127.0.0.1:1055")
 
     def test_ttl_and_eviction(self):
         with patch.object(main.time, "time", return_value=1000):
