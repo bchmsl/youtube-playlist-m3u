@@ -85,6 +85,18 @@ class ServiceTests(unittest.TestCase):
         self.assertEqual(ydl.call_args.args[0]["sleep_interval_requests"], 1)
         self.assertEqual(main.pacer.wait.call_count, 1)
 
+    @patch.object(main, "YoutubeDL")
+    def test_optional_youtube_proxy_is_passed_to_ytdlp(self, ydl):
+        extractor = ydl.return_value.__enter__.return_value
+        extractor.extract_info.return_value = {
+            "url": "https://example.com/media", "protocol": "https",
+            "vcodec": "avc1", "acodec": "aac",
+        }
+        with patch.dict(os.environ, {"YOUTUBE_PROXY": "socks5://127.0.0.1:1055"}):
+            response = self.client.get("/video/abcdefghijk.mp4", follow_redirects=False)
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(ydl.call_args.args[0]["proxy"], "socks5://127.0.0.1:1055")
+
     def test_ttl_and_eviction(self):
         with patch.object(main.time, "time", return_value=1000):
             self.assertEqual(main.media_ttl("https://example.com/?expire=1180"), 120)

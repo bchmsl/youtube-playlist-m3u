@@ -245,6 +245,9 @@ def extract(url, *, flat=False):
             "ignoreerrors": False,
             "noplaylist": not flat,
         }
+        proxy = os.environ.get("YOUTUBE_PROXY")
+        if proxy:
+            options["proxy"] = proxy
         if not flat:
             options["format"] = FORMAT
         attempts = 1 if flat else 2

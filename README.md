@@ -65,8 +65,9 @@ the final check. A 302 alone verifies resolution, not playback from your network
    remote, or change it with `git remote set-url origin YOUR_REPOSITORY_URL`.
 2. Sign in to Render, connect your GitHub account, choose **New → Blueprint**,
    select the repository, and deploy the detected `render.yaml`.
-   The blueprint creates one Docker web service on the **paid Starter plan**
-   to avoid free-tier idle spin-down. No persistent disk or secrets are needed.
+   The blueprint creates one Docker web service on Render's **Free plan**. It
+   may spin down while idle, so the first request can take longer. No persistent
+   disk is needed.
    Alternatively choose **New → Web Service**, connect the repo, select Docker,
    use `./Dockerfile`, choose your plan, and set health check path `/health`.
 3. Wait for the deploy to become live. Copy the public `https://...onrender.com`
@@ -176,6 +177,33 @@ temporary copy so yt-dlp cannot overwrite Render's mounted secret; the copy is
 removed afterwards, including on errors. No media is downloaded or stored.
 Replace expired cookies through Render; remove the environment variable to disable
 authenticated extraction. [Render secret-file documentation](https://render.com/docs/configure-environment-variables#secret-files).
+
+## Optional iPhone egress with Tailscale
+
+If YouTube blocks Render's datacenter IP, the container can send only its yt-dlp
+traffic through a Tailscale exit node. Render remains the public host and the M3U
+URLs do not change. When the exit node is the same iPhone running CarTV, URL
+resolution and playback normally leave through the same public network address.
+The iPhone must remain online with Tailscale connected while resolving videos.
+
+1. Create a free personal Tailscale account, install Tailscale on the iPhone, and
+   sign in. In the iOS app open **Exit Node** and select **Run as Exit Node**.
+2. In the Tailscale admin console, open **Machines**, select the iPhone's route
+   settings, and approve **Use as exit node**.
+3. In **Settings → Keys**, generate a reusable, ephemeral auth key for the Render
+   container. Store it only as a Render secret environment variable named
+   `TS_AUTHKEY`; never commit it.
+4. Add `TS_EXIT_NODE` in Render with the iPhone's Tailscale device name or
+   `100.x.y.z` Tailscale address. Optionally set `TS_HOSTNAME` for the Render node.
+5. Remove `YOUTUBE_COOKIE_FILE` while its cookie file is invalid, then redeploy.
+   The startup log should say `Tailscale YouTube egress enabled through the
+   configured exit node`.
+
+If either `TS_AUTHKEY` or `TS_EXIT_NODE` is absent, Tailscale stays disabled and
+the service behaves as before. This uses Tailscale userspace networking and a
+local SOCKS5 proxy, so Render does not need a TUN device or persistent disk.
+See Tailscale's [exit-node instructions](https://tailscale.com/docs/features/exit-nodes?tab=ios)
+and [userspace networking documentation](https://tailscale.com/docs/concepts/userspace-networking).
 
 
 ## mweb + automatic PO Tokens

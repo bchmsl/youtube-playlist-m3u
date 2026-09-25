@@ -2,7 +2,7 @@ services:
   - type: web
     name: youtube-m3u
     runtime: docker
-    plan: starter
+    plan: free
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
     envVars:
