@@ -204,6 +204,13 @@ For intermittent `Sign in to confirm you're not a bot` responses, video resoluti
 is retried once after three seconds with a fresh extractor and PO Token. The
 five-minute failure cooldown starts only when that retry also fails.
 
+Each `/video` request logs a bounded diagnostic fingerprint before upstream
+extraction: HTTP method, Range and Accept headers, a sanitized User-Agent, cache
+status, time since that client's previous request, and the number of distinct
+video IDs requested by that client in the preceding ten seconds. This contains
+no cookie or media URL data. Use these fields to distinguish player playlist
+scans from real playback before enabling scan suppression.
+
 For a controlled deployment test, stop CarTV's playlist scanning and request two
 video IDs sequentially (allow the first request to finish before starting the next):
 

@@ -19,6 +19,7 @@ class ServiceTests(unittest.TestCase):
         self.addCleanup(self.environment.stop)
         main.playlists = main.Cache(128)
         main.videos = main.Cache(1024)
+        main.video_request_diagnostics = main.VideoRequestDiagnostics()
         self.provider_dir = tempfile.TemporaryDirectory()
         self.addCleanup(self.provider_dir.cleanup)
         build = Path(self.provider_dir.name) / "build"
@@ -158,6 +159,23 @@ class ServiceTests(unittest.TestCase):
         main.videos.put("abcdefghijk", "https://example.com/media", 120)
         main.cooldown.trip("YouTube denied access")
         self.assertEqual(self.client.get("/video/abcdefghijk.mp4", follow_redirects=False).status_code, 302)
+
+    def test_video_request_fingerprint_logs_scan_signals(self):
+        for video_id in ("abcdefghijk", "12345678901"):
+            main.videos.put(video_id, "https://example.com/media", 120)
+        with self.assertLogs("uvicorn.error", level="INFO") as captured:
+            first = self.client.get(
+                "/video/abcdefghijk.mp4", follow_redirects=False,
+                headers={"Range": "bytes=0-1", "User-Agent": "CarTV\nProbe", "Accept": "video/mp4"},
+            )
+            second = self.client.head("/video/12345678901.mp4", follow_redirects=False)
+        self.assertEqual((first.status_code, second.status_code), (302, 302))
+        output = "\n".join(captured.output)
+        self.assertIn("method=GET", output)
+        self.assertIn("range='bytes=0-1'", output)
+        self.assertIn("ua='CarTV Probe'", output)
+        self.assertIn("method=HEAD", output)
+        self.assertIn("burst_unique_10s=2", output)
 
     @patch.object(main, "YoutubeDL")
     def test_recovered_warning_does_not_pause_next_video(self, ydl):

@@ -161,6 +161,40 @@ playlists = Cache(128)
 videos = Cache(1024)
 
 
+class VideoRequestDiagnostics:
+    """Log bounded, non-secret request fingerprints for player scan analysis."""
+    def __init__(self):
+        self.lock = threading.Lock()
+        self.clients = OrderedDict()
+
+    def observe(self, request, video_id, cache_hit):
+        now = time.monotonic()
+        client = request.client.host if request.client else "unknown"
+        with self.lock:
+            state = self.clients.get(client, {"last": None, "events": []})
+            delta_ms = -1 if state["last"] is None else round((now - state["last"]) * 1000)
+            events = [(timestamp, item_id) for timestamp, item_id in state["events"] if now - timestamp <= 10]
+            events.append((now, video_id))
+            state = {"last": now, "events": events}
+            self.clients[client] = state
+            self.clients.move_to_end(client)
+            while len(self.clients) > 128:
+                self.clients.popitem(last=False)
+            burst_unique = len({item_id for _, item_id in events})
+        user_agent = clean_title(request.headers.get("user-agent", ""))[:160]
+        byte_range = clean_title(request.headers.get("range", ""))[:80]
+        accept = clean_title(request.headers.get("accept", ""))[:120]
+        log.info(
+            "Video request fingerprint id=%s method=%s client=%s cache=%s "
+            "delta_ms=%s burst_unique_10s=%s range=%r accept=%r ua=%r",
+            video_id, request.method, client, cache_hit, delta_ms,
+            burst_unique, byte_range, accept, user_agent,
+        )
+
+
+video_request_diagnostics = VideoRequestDiagnostics()
+
+
 def cached(cache, key, loader):
     value = cache.get(key)
     if value is not None:
@@ -315,8 +349,11 @@ def playlist(playlist_id: str, request: Request):
 
 
 @app.api_route("/video/{video_id}.mp4", methods=["GET", "HEAD"])
-def video(video_id: str):
+def video(video_id: str, request: Request):
     if not VIDEO_ID.fullmatch(video_id):
         raise HTTPException(404, "Invalid video ID")
-    url = cached(videos, video_id, lambda: load_video(video_id))
+    url = videos.get(video_id)
+    video_request_diagnostics.observe(request, video_id, url is not None)
+    if url is None:
+        url = cached(videos, video_id, lambda: load_video(video_id))
     return RedirectResponse(url, status_code=302, headers={"Cache-Control": "no-store"})
